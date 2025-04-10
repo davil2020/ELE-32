@@ -46,9 +46,13 @@ def LDPC(dv, dc, N):
             vnode_index = connections[idx]
             vnode = all_vnodes[vnode_index]
             cnode.add_v_node(vnode)
-            vnode.add_v_node(cnode)
+            vnode.add_c_node(cnode)
             idx += 1
 
     return all_vnodes, all_cnodes
 
-LDPC(3,7,7)
+# [all_vnodes, all_cnodes]= LDPC(3,7,7)
+# print(all_vnodes)
+# print(all_cnodes)
+
+
