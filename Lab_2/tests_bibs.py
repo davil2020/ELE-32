@@ -19,6 +19,7 @@ class CNode:
     def __init__(self):
         self.v_nodes = []
         self.dc = 0
+        self.parid_check = 0
 
     def add_v_node(self, vnode):
         if not isinstance(vnode, VNode):
