@@ -1,8 +1,10 @@
-# Calculadora de soma simples
+# %% Bloco 1
+x = 10
+y = 5
+print("Soma:", x + y)
 
-num1 = float(input("Digite o primeiro número: "))
-num2 = float(input("Digite o segundo número: "))
+# %% Bloco 2
+print("Multiplicação:", x * y)
 
-soma = num1 + num2
 
-print("A soma é:", soma)
+# %%
