@@ -1,3 +1,5 @@
+import random
+
 class VNode:
     def __init__(self, val: int = 0):
         if val not in (0, 1):
@@ -50,6 +52,16 @@ def LDPC(dv, dc, N):
             idx += 1
 
     return all_vnodes, all_cnodes
+
+def BSC_bit_flip(N, p):
+    recieved = []
+    for _ in range(N):
+        recieved.append(1 if random.random() < p else 0) 
+    return recieved
+
+
+print(BSC_bit_flip(5,0.2))
+
 
 # [all_vnodes, all_cnodes]= LDPC(3,7,7)
 # print(all_vnodes)
