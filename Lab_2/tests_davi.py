@@ -1,7 +1,6 @@
-#%% Gerando vetor p
 import numpy as np
 import random
-
+import matplotlib.pyplot as plt
 
 def generate_vector_p():
     p = [0.5, 0.2, 0.1]
@@ -12,24 +11,12 @@ def generate_vector_p():
         p.append(q[j])
     return p
 
-vector_p = generate_vector_p()
-print(vector_p)
-
-
-#%% Criando os bits para hamming
 def generate_random_bits(n):
   return np.random.randint(0, 2, n, dtype=np.uint8)
-
-random_bits = generate_random_bits(100)
-random_bits
 
 def split_bits_reshape(total_bits, k):
   return total_bits.reshape(-1, k)
 
-split_arrays = split_bits_reshape(random_bits, 4)
-# print(split_arrays[:5])
-
-#%% Codificador de Hamming
 def hamming_codificator(split_arrays):
     encoded_arrays = []
 
@@ -47,10 +34,6 @@ def hamming_codificator(split_arrays):
 
     return np.array(encoded_arrays)
 
-encoded_data = hamming_codificator(split_arrays)
-# print(encoded_data)
-
-#%% Canal BSC
 def BSC(encoded_data, p):
     modified_matrix = []
     for word in encoded_data:
@@ -58,6 +41,65 @@ def BSC(encoded_data, p):
         modified_matrix.append(modified_word)
     return np.array(modified_matrix)
 
-p_value = 0.1
-modified_matrix = BSC(encoded_data, p_value)
+def matrix_multiplication(transmited_data, Ht):
+  sindromes = []
+  for data in transmited_data:
+    result = np.dot(data, Ht) % 2
+    sindromes.append(result)
+  return sindromes
+
+def syndrome_to_bit_position(syndrome, Ht):
+    if np.all(syndrome == 0):
+        return None
+    for pos in range(Ht.shape[0]):
+        if np.array_equal(syndrome, Ht[pos]):
+            return pos
+    return None
+
+def correct_errors(word, bit_position):
+    corrected_word = word.copy()
+
+    if bit_position is not None:
+        corrected_word[bit_position] = (corrected_word[bit_position] + 1) % 2
+
+    return corrected_word
+
+def correct_matrix(modified_matrix, Ht):
+    corrected_matrix = []
+    syndromes = matrix_multiplication(modified_matrix, Ht)
+    for i, word in enumerate(modified_matrix):
+        bit_pos = syndrome_to_bit_position(syndromes[i], Ht)
+        corrected_word = correct_errors(word, bit_pos)
+        corrected_matrix.append(corrected_word)
+    return np.array(corrected_matrix)
+
+def report_differences(encoded_data, modified_matrix, corrected_matrix):
+    divergence = (encoded_data + corrected_matrix) % 2
+    info_bits = divergence[:, :4]
+    total_errors = np.sum(info_bits)
+    error_probability = np.float64(total_errors) / np.float64(1000000)
+    return error_probability
+
+def hamming():
+   
+   Ht = np.array([
+    [1, 1, 1],
+    [1, 0, 1],
+    [1, 1, 0],
+    [0, 1, 1],
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1]])
+   
+   vector_p = generate_vector_p()
+   erro_prob = []
+
+   for p in vector_p:
+      random_bits = generate_random_bits(1000000)
+      split_arrays = split_bits_reshape(random_bits, 4)
+      encoded_data = hamming_codificator(split_arrays)
+      modified_matrix = BSC(encoded_data, p)
+      corrected_matrix = correct_matrix(modified_matrix, Ht)
+      erro_prob.append(report_differences(encoded_data, modified_matrix, corrected_matrix))
+   return erro_prob
 
