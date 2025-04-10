@@ -3,14 +3,14 @@ class VNode:
         if val not in (0, 1):
             raise ValueError("val deve ser 0 ou 1")
         self.val = val
-        self.v_nodes = []
+        self.c_nodes = []
         self.dv = 0
 
-    def add_v_node(self, vnode):
-        if not isinstance(vnode, VNode):
-            raise TypeError("Esperado um objeto do tipo VNode")
-        self.v_nodes.append(vnode)
-        self.dv = len(self.v_nodes)
+    def add_c_node(self, cnode):
+        if not isinstance(cnode, CNode):
+            raise TypeError("Esperado um objeto do tipo CNode")
+        self.c_nodes.append(cnode)
+        self.dv = len(self.c_nodes)
 
 
 class CNode:
