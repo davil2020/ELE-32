@@ -1,12 +1,11 @@
 import random
 
 class VNode:
-    def __init__(self, val: int = 0):
-        if val not in (0, 1):
-            raise ValueError("val deve ser 0 ou 1")
-        self.val = val
+    def __init__(self):
+        self.val = 0
         self.c_nodes = []
         self.dv = 0
+        self.count_odd_c_node = 0
 
     def add_c_node(self, cnode):
         if not isinstance(cnode, CNode):
@@ -54,15 +53,37 @@ def LDPC(dv, dc, N):
 
     return all_vnodes, all_cnodes
 
-def BSC_bit_flip(N, p):
-    recieved = []
-    for _ in range(N):
-        recieved.append(1 if random.random() < p else 0) 
-    return recieved
+def BSC_bit_flip(all_vnodes, p):
+    for vnode in all_vnodes:
+        if random.random() < p:
+            vnode.val ^= 1  # Flip: 0 vira 1 e 1 vira 0
 
+def Lista_N(dc = 7):
+    valores = [100, 200, 500, 1000]
+    maiores_multiplos = [] 
+    for v in valores:
+        maior_multiplo = v - (v % dc)
+        maiores_multiplos.append(maior_multiplo)
+    return maiores_multiplos
 
-print(BSC_bit_flip(5,0.2))
+# print(Lista_N())
 
+def LDPC_decode():
+    dc = 7
+    dv = 3
+    possiveis_N = Lista_N(dc)
+
+    N = possiveis_N[0]
+    [all_vnodes, all_cnodes]= LDPC(dv, dc, N)
+    BSC_bit_flip(all_vnodes, 0.1)
+
+    # print([vnode.val for vnode in all_vnodes])
+
+    return 0
+
+LDPC_decode()
+
+# dc = 7 e dv=3
 
 # [all_vnodes, all_cnodes]= LDPC(3,7,7)
 # print(all_vnodes)
