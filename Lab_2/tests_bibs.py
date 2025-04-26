@@ -66,7 +66,26 @@ def Lista_N(dc = 7):
         maiores_multiplos.append(maior_multiplo)
     return maiores_multiplos
 
-# print(Lista_N())
+def cnodes_parid_check(all_cnodes):
+    for cnode in all_cnodes:
+        cnode.parid_check = 0
+        for vnode in cnode.v_nodes:
+            cnode.parid_check = (cnode.parid_check + vnode.val) % 2
+
+def vnodes_bit_ajust(all_vnodes):
+    is_ok = True
+    vnode_to_ajust = all_vnodes[0]
+    for vnode in all_vnodes:
+        vnode.count_odd_c_node = 0
+        for cnode in vnode.c_nodes:
+            vnode.count_odd_c_node += cnode.parid_check
+        if vnode.count_odd_c_node > 0:
+            is_ok = False
+        if vnode.count_odd_c_node > vnode_to_ajust.count_odd_c_node:
+            vnode_to_ajust = vnode
+    if not is_ok:
+        vnode_to_ajust.val = (vnode_to_ajust.val + 1) % 2
+    return is_ok
 
 def LDPC_decode():
     dc = 7
@@ -75,10 +94,23 @@ def LDPC_decode():
 
     N = possiveis_N[0]
     [all_vnodes, all_cnodes]= LDPC(dv, dc, N)
+
     BSC_bit_flip(all_vnodes, 0.1)
 
-    # print([vnode.val for vnode in all_vnodes])
-
+    max_iter = 200
+    iteration = 0
+    while iteration < max_iter:
+        # print([vnode.val for vnode in all_vnodes])
+        # print([cnode.parid_check for cnode in all_cnodes])
+        cnodes_parid_check(all_cnodes)
+        is_ok = vnodes_bit_ajust(all_vnodes)
+        if is_ok:
+            break
+        iteration += 1
+    print([vnode.val for vnode in all_vnodes])
+    print([cnode.parid_check for cnode in all_cnodes])
+    print(iteration)
+    
     return 0
 
 LDPC_decode()
