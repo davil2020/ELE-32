@@ -1,5 +1,8 @@
 import random
 import matplotlib.pyplot as plt
+from Lab_1.lab1 import hamming_simulation 
+import os
+import time
 
 class VNode:
     def __init__(self):
@@ -31,26 +34,35 @@ def LDPC(dv, dc, N):
     if (N * dv) % dc != 0:
         raise ValueError("N * dv deve ser divisível por dc para um LDPC regular.")
 
-    M = (N * dv) // dc 
+    M = (N * dv) // dc
     all_vnodes = [VNode() for _ in range(N)]
     all_cnodes = [CNode() for _ in range(M)]
 
-    connections = []
-
+    # 1) Cria lista de stubs: cada v-node i aparece dv vezes
+    stubs = []
     for i in range(N):
-        connections += [i] * dv
+        stubs += [i] * dv
 
-    import random
-    random.shuffle(connections)
-
-    idx = 0
+    # 2) Para cada c-node, seleciona dc stubs distintos
     for cnode in all_cnodes:
+        escolhidos = set()
         for _ in range(dc):
-            vnode_index = connections[idx]
-            vnode = all_vnodes[vnode_index]
-            cnode.add_v_node(vnode)
-            vnode.add_c_node(cnode)
-            idx += 1
+            while True:
+                # escolhe stub aleatório
+                idx = random.randrange(len(stubs))
+                v_idx = stubs[idx]
+                # garante distinctidade dentro deste c-node
+                if v_idx not in escolhidos:
+                    escolhidos.add(v_idx)
+                    # conecta
+                    vnode = all_vnodes[v_idx]
+                    cnode.add_v_node(vnode)
+                    vnode.add_c_node(cnode)
+                    # remove stub em O(1)
+                    stubs[idx] = stubs[-1]
+                    stubs.pop()
+                    break
+                # caso contrário, repete até achar stub válido
 
     return all_vnodes, all_cnodes
 
@@ -120,9 +132,9 @@ def LDPC_decode(dc, dv):
             total_bits = 0
             total_bits_errados = 0
 
-            for _ in range(monte_carlo_runs):
+            [all_vnodes, all_cnodes]= LDPC(dv, dc, N)
 
-                [all_vnodes, all_cnodes]= LDPC(dv, dc, N)
+            for _ in range(monte_carlo_runs):
 
                 BSC_bit_flip(all_vnodes, p)
                 max_iter = 50
@@ -158,7 +170,7 @@ def LDPC_decode(dc, dv):
     
     return prob_n0, prob_n1, prob_n2, prob_n3, prob_geral
 
-def plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, possiveis_N, filename):
+def plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, possiveis_N, filename, error_hamming=None):
     vector_p = generate_vector_p()
 
     plt.figure(figsize=(10, 6))
@@ -169,7 +181,8 @@ def plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, po
     plt.semilogx(vector_p, prob_n3, marker='v', linestyle=':', label=f'LDPC N={possiveis_N[3]}')
     plt.semilogx(vector_p, prob_geral, marker='x', linestyle='-', label='Média Ponderada')
     plt.semilogx(vector_p, vector_p, marker='d', linestyle=':', label='Não codificado')
-
+    if error_hamming is not None:
+        plt.semilogx(vector_p, error_hamming, marker='*', linestyle='--', label='Hamming (7,4)')
     plt.yscale('log')
     plt.gca().invert_xaxis()
 
@@ -180,7 +193,8 @@ def plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, po
     plt.legend()
 
     # Salva o gráfico
-    plt.savefig(filename)
+    save_path = os.path.join(os.path.dirname(__file__), filename)
+    plt.savefig(save_path)
     plt.close()
 
 
@@ -190,18 +204,27 @@ def main():
         (2, 1, "ldpc_dv1_dc2.png"),   # dv=1, dc=2
         (3, 2, "ldpc_dv2_dc3.png"),   # dv=2, dc=3
     ]
+
+    hamming_probs = hamming_simulation()
     for dc, dv, filename in configs:
         possiveis_N = Lista_N(dc)
         print(f"\nRodando simulação para dv={dv}, dc={dc}")
+        t0 = time.perf_counter()
         prob_n0, prob_n1, prob_n2, prob_n3, prob_geral = LDPC_decode(dc=dc, dv=dv)
-        plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, possiveis_N, filename)
+        dt = time.perf_counter() - t0
+        print(f"Tempo total: {dt:.2f}s")
+        plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, possiveis_N, filename, hamming_probs)
         print(f"Gráfico salvo como {filename}")
 
 main()
+# LDPC(3,7,98)
 # print(Lista_N(dc=2))
 # dc = 7 e dv=3
 
-# [all_vnodes, all_cnodes]= LDPC(3,7,7)
+# [all_vnodes, all_cnodes]= LDPC(3,7,14)
+# for i, vnode in enumerate(all_vnodes):
+#     c_indices = [ all_cnodes.index(cnode) for cnode in vnode.c_nodes ]
+#     print(f"VNode {i}: conectado a CNodes {c_indices}")
 # print(all_vnodes)
 # print(all_cnodes)
 
