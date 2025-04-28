@@ -105,7 +105,7 @@ def LDPC_decode(dc, dv):
 
     num_N = len(possiveis_N)
     num_P = len(possiveis_P)
-    monte_carlo_runs = 1000
+    monte_carlo_runs = 10000
 
     # Inicializa os vetores de probabilidade para cada N
     prob_n0 = [0.0] * num_P
@@ -187,8 +187,8 @@ def plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, po
 def main():
     configs = [
         (7, 3, "ldpc_dv3_dc7.png"),   # dv=3, dc=7
-        (2, 1, "ldpc_dv1_dc2.png"),   # dv=1, dc=2
-        (3, 2, "ldpc_dv2_dc3.png"),   # dv=2, dc=3
+        # (2, 1, "ldpc_dv1_dc2.png"),   # dv=1, dc=2
+        # (3, 2, "ldpc_dv2_dc3.png"),   # dv=2, dc=3
     ]
     for dc, dv, filename in configs:
         possiveis_N = Lista_N(dc)
