@@ -158,17 +158,15 @@ def LDPC_decode(dc, dv):
     
     return prob_n0, prob_n1, prob_n2, prob_n3, prob_geral
 
-
-def main():
-    prob_n0, prob_n1, prob_n2, prob_n3, prob_geral = LDPC_decode(dc=7, dv=3)
+def plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, filename):
     vector_p = generate_vector_p()
 
     plt.figure(figsize=(10, 6))
 
-    plt.semilogx(vector_p, prob_n0, marker='o', linestyle='-', label='LDPC N=98')
-    plt.semilogx(vector_p, prob_n1, marker='s', linestyle='--', label='LDPC N=196')
-    plt.semilogx(vector_p, prob_n2, marker='^', linestyle='-.', label='LDPC N=497')
-    plt.semilogx(vector_p, prob_n3, marker='v', linestyle=':', label='LDPC N=994')
+    plt.semilogx(vector_p, prob_n0, marker='o', linestyle='-', label=f'LDPC N=98')
+    plt.semilogx(vector_p, prob_n1, marker='s', linestyle='--', label=f'LDPC N=196')
+    plt.semilogx(vector_p, prob_n2, marker='^', linestyle='-.', label=f'LDPC N=497')
+    plt.semilogx(vector_p, prob_n3, marker='v', linestyle=':', label=f'LDPC N=994')
     plt.semilogx(vector_p, prob_geral, marker='x', linestyle='-', label='Média Ponderada')
     plt.semilogx(vector_p, vector_p, marker='d', linestyle=':', label='Não codificado')
 
@@ -177,11 +175,26 @@ def main():
 
     plt.xlabel("Probabilidade de erro (p)")
     plt.ylabel("Taxa de erro de bits")
-    plt.title("Comparação de Correção de Erros - LDPC: dc = 7 e dv = 3")
+    plt.title(f"Correção de Erros - LDPC (dv={dv}, dc={dc})")
     plt.grid(True, which="both", linestyle="--")
     plt.legend()
 
-    plt.show()
+    # Salva o gráfico
+    plt.savefig(filename)
+    plt.close()
+
+
+def main():
+    configs = [
+        (7, 3, "ldpc_dv3_dc7.png"),   # dv=3, dc=7
+        (2, 1, "ldpc_dv1_dc2.png"),   # dv=1, dc=2
+        (3, 2, "ldpc_dv2_dc3.png"),   # dv=2, dc=3
+    ]
+    for dc, dv, filename in configs:
+        print(f"\nRodando simulação para dv={dv}, dc={dc}")
+        prob_n0, prob_n1, prob_n2, prob_n3, prob_geral = LDPC_decode(dc=dc, dv=dv)
+        plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, filename)
+        print(f"Gráfico salvo como {filename}")
 
 main()
 # dc = 7 e dv=3
