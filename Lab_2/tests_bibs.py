@@ -1,4 +1,5 @@
 import random
+import matplotlib.pyplot as plt
 
 class VNode:
     def __init__(self):
@@ -66,6 +67,15 @@ def Lista_N(dc = 7):
         maiores_multiplos.append(maior_multiplo)
     return maiores_multiplos
 
+def generate_vector_p():
+    p = [0.5, 0.2, 0.1]
+    q = [0.5, 0.2, 0.1]
+    for i in range(1,5):
+      for j in range(3):
+        q[j] = q[j]/10
+        p.append(q[j])
+    return p
+
 def cnodes_parid_check(all_cnodes):
     for cnode in all_cnodes:
         cnode.parid_check = 0
@@ -87,34 +97,93 @@ def vnodes_bit_ajust(all_vnodes):
         vnode_to_ajust.val = (vnode_to_ajust.val + 1) % 2
     return is_ok
 
-def LDPC_decode():
-    dc = 7
-    dv = 3
+def LDPC_decode(dc, dv):
+    # dc = 7
+    # dv = 3
+    possiveis_P = generate_vector_p()
     possiveis_N = Lista_N(dc)
 
-    N = possiveis_N[0]
-    [all_vnodes, all_cnodes]= LDPC(dv, dc, N)
+    num_N = len(possiveis_N)
+    num_P = len(possiveis_P)
+    monte_carlo_runs = 1000
 
-    BSC_bit_flip(all_vnodes, 0.1)
+    # Inicializa os vetores de probabilidade para cada N
+    prob_n0 = [0.0] * num_P
+    prob_n1 = [0.0] * num_P
+    prob_n2 = [0.0] * num_P
+    prob_n3 = [0.0] * num_P
 
-    max_iter = 200
-    iteration = 0
-    while iteration < max_iter:
-        # print([vnode.val for vnode in all_vnodes])
-        # print([cnode.parid_check for cnode in all_cnodes])
-        cnodes_parid_check(all_cnodes)
-        is_ok = vnodes_bit_ajust(all_vnodes)
-        if is_ok:
-            break
-        iteration += 1
-    print([vnode.val for vnode in all_vnodes])
-    print([cnode.parid_check for cnode in all_cnodes])
-    print(iteration)
+    prob_n = [prob_n0, prob_n1, prob_n2, prob_n3]
+
+    for idx_p, p in enumerate(possiveis_P):
+        for idx_n, N in enumerate(possiveis_N):
+            total_bits = 0
+            total_bits_errados = 0
+
+            for _ in range(monte_carlo_runs):
+
+                [all_vnodes, all_cnodes]= LDPC(dv, dc, N)
+
+                BSC_bit_flip(all_vnodes, p)
+                max_iter = 50
+                iteration = 0
+                while iteration < max_iter:
+                    # print([vnode.val for vnode in all_vnodes])
+                    # print([cnode.parid_check for cnode in all_cnodes])
+                    cnodes_parid_check(all_cnodes)
+                    is_ok = vnodes_bit_ajust(all_vnodes)
+                    if is_ok:
+                        break
+                    iteration += 1
+                bits_errados = sum(vnode.val for vnode in all_vnodes)
+                total_bits_errados += bits_errados
+                total_bits += len(all_vnodes)
+                # print([vnode.val for vnode in all_vnodes])
+                # print([cnode.parid_check for cnode in all_cnodes])
+                # print(iteration)
+
+                
+            # Calcula BER para este (p, N)
+            prob_n[idx_n][idx_p] = total_bits_errados / total_bits
+
+    total_N = sum(possiveis_N)
+    prob_geral = []
+    for idx_p in range(num_P):
+        weighted_sum = (possiveis_N[0] * prob_n0[idx_p] +
+                        possiveis_N[1] * prob_n1[idx_p] +
+                        possiveis_N[2] * prob_n2[idx_p] +
+                        possiveis_N[3] * prob_n3[idx_p])
+        prob_geral.append(weighted_sum / total_N)
+   
     
-    return 0
+    return prob_n0, prob_n1, prob_n2, prob_n3, prob_geral
 
-LDPC_decode()
 
+def main():
+    prob_n0, prob_n1, prob_n2, prob_n3, prob_geral = LDPC_decode(dc=7, dv=3)
+    vector_p = generate_vector_p()
+
+    plt.figure(figsize=(10, 6))
+
+    plt.semilogx(vector_p, prob_n0, marker='o', linestyle='-', label='LDPC N=98')
+    plt.semilogx(vector_p, prob_n1, marker='s', linestyle='--', label='LDPC N=196')
+    plt.semilogx(vector_p, prob_n2, marker='^', linestyle='-.', label='LDPC N=497')
+    plt.semilogx(vector_p, prob_n3, marker='v', linestyle=':', label='LDPC N=994')
+    plt.semilogx(vector_p, prob_geral, marker='x', linestyle='-', label='Média Ponderada')
+    plt.semilogx(vector_p, vector_p, marker='d', linestyle=':', label='Não codificado')
+
+    plt.yscale('log')
+    plt.gca().invert_xaxis()
+
+    plt.xlabel("Probabilidade de erro (p)")
+    plt.ylabel("Taxa de erro de bits")
+    plt.title("Comparação de Correção de Erros - LDPC: dc = 7 e dv = 3")
+    plt.grid(True, which="both", linestyle="--")
+    plt.legend()
+
+    plt.show()
+
+main()
 # dc = 7 e dv=3
 
 # [all_vnodes, all_cnodes]= LDPC(3,7,7)
