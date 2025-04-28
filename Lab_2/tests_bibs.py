@@ -186,9 +186,9 @@ def plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, po
 
 def main():
     configs = [
-        # (7, 3, "ldpc_dv3_dc7.png"),   # dv=3, dc=7
+        (7, 3, "ldpc_dv3_dc7.png"),   # dv=3, dc=7
         (2, 1, "ldpc_dv1_dc2.png"),   # dv=1, dc=2
-        # (3, 2, "ldpc_dv2_dc3.png"),   # dv=2, dc=3
+        (3, 2, "ldpc_dv2_dc3.png"),   # dv=2, dc=3
     ]
     for dc, dv, filename in configs:
         possiveis_N = Lista_N(dc)
