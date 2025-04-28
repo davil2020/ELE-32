@@ -158,15 +158,15 @@ def LDPC_decode(dc, dv):
     
     return prob_n0, prob_n1, prob_n2, prob_n3, prob_geral
 
-def plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, filename):
+def plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, possiveis_N, filename):
     vector_p = generate_vector_p()
 
     plt.figure(figsize=(10, 6))
 
-    plt.semilogx(vector_p, prob_n0, marker='o', linestyle='-', label=f'LDPC N=98')
-    plt.semilogx(vector_p, prob_n1, marker='s', linestyle='--', label=f'LDPC N=196')
-    plt.semilogx(vector_p, prob_n2, marker='^', linestyle='-.', label=f'LDPC N=497')
-    plt.semilogx(vector_p, prob_n3, marker='v', linestyle=':', label=f'LDPC N=994')
+    plt.semilogx(vector_p, prob_n0, marker='o', linestyle='-', label=f'LDPC N={possiveis_N[0]}')
+    plt.semilogx(vector_p, prob_n1, marker='s', linestyle='--', label=f'LDPC N={possiveis_N[1]}')
+    plt.semilogx(vector_p, prob_n2, marker='^', linestyle='-.', label=f'LDPC N={possiveis_N[2]}')
+    plt.semilogx(vector_p, prob_n3, marker='v', linestyle=':', label=f'LDPC N={possiveis_N[3]}')
     plt.semilogx(vector_p, prob_geral, marker='x', linestyle='-', label='Média Ponderada')
     plt.semilogx(vector_p, vector_p, marker='d', linestyle=':', label='Não codificado')
 
@@ -191,12 +191,14 @@ def main():
         (3, 2, "ldpc_dv2_dc3.png"),   # dv=2, dc=3
     ]
     for dc, dv, filename in configs:
+        possiveis_N = Lista_N(dc)
         print(f"\nRodando simulação para dv={dv}, dc={dc}")
         prob_n0, prob_n1, prob_n2, prob_n3, prob_geral = LDPC_decode(dc=dc, dv=dv)
-        plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, filename)
+        plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, possiveis_N, filename)
         print(f"Gráfico salvo como {filename}")
 
 main()
+# print(Lista_N(dc=2))
 # dc = 7 e dv=3
 
 # [all_vnodes, all_cnodes]= LDPC(3,7,7)
