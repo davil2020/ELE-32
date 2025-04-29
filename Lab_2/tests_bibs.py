@@ -117,7 +117,7 @@ def LDPC_decode(dc, dv):
 
     num_N = len(possiveis_N)
     num_P = len(possiveis_P)
-    monte_carlo_runs = 10000
+    monte_carlo_runs = 1
 
     # Inicializa os vetores de probabilidade para cada N
     prob_n0 = [0.0] * num_P
@@ -127,12 +127,17 @@ def LDPC_decode(dc, dv):
 
     prob_n = [prob_n0, prob_n1, prob_n2, prob_n3]
 
+   
+    
+
     for idx_p, p in enumerate(possiveis_P):
         for idx_n, N in enumerate(possiveis_N):
             total_bits = 0
             total_bits_errados = 0
-
+            t0 = time.perf_counter()
             [all_vnodes, all_cnodes]= LDPC(dv, dc, N)
+            dt = time.perf_counter() - t0
+            print(f"Tempo total para criar o grafo: {dt:.2f}s")
 
             for _ in range(monte_carlo_runs):
 
@@ -140,8 +145,8 @@ def LDPC_decode(dc, dv):
                 max_iter = 50
                 iteration = 0
                 while iteration < max_iter:
-                    # print([vnode.val for vnode in all_vnodes])
-                    # print([cnode.parid_check for cnode in all_cnodes])
+                    print([vnode.val for vnode in all_vnodes])
+                    print([cnode.parid_check for cnode in all_cnodes])
                     cnodes_parid_check(all_cnodes)
                     is_ok = vnodes_bit_ajust(all_vnodes)
                     if is_ok:
