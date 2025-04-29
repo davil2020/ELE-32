@@ -115,9 +115,14 @@ def LDPC_decode(dc, dv):
     possiveis_P = generate_vector_p()
     possiveis_N = Lista_N(dc)
 
+    templates = {}
+    for N in possiveis_N:
+        print(f'templare relativo a {N} criado')
+        templates[N] = LDPC(dv, dc, N)
+
     num_N = len(possiveis_N)
     num_P = len(possiveis_P)
-    monte_carlo_runs = 1
+    monte_carlo_runs = 10000
 
     # Inicializa os vetores de probabilidade para cada N
     prob_n0 = [0.0] * num_P
@@ -134,19 +139,21 @@ def LDPC_decode(dc, dv):
         for idx_n, N in enumerate(possiveis_N):
             total_bits = 0
             total_bits_errados = 0
-            t0 = time.perf_counter()
-            [all_vnodes, all_cnodes]= LDPC(dv, dc, N)
-            dt = time.perf_counter() - t0
-            print(f"Tempo total para criar o grafo: {dt:.2f}s")
+            all_vnodes, all_cnodes = templates[N]
 
             for _ in range(monte_carlo_runs):
+                for vnode in all_vnodes:
+                    vnode.val = 0
+                    vnode.count_odd_c_node = 0
 
+                for cnode in all_cnodes:
+                    cnode.parid_check = 0
                 BSC_bit_flip(all_vnodes, p)
                 max_iter = 50
                 iteration = 0
                 while iteration < max_iter:
-                    print([vnode.val for vnode in all_vnodes])
-                    print([cnode.parid_check for cnode in all_cnodes])
+                    # print([vnode.val for vnode in all_vnodes])
+                    # print([cnode.parid_check for cnode in all_cnodes])
                     cnodes_parid_check(all_cnodes)
                     is_ok = vnodes_bit_ajust(all_vnodes)
                     if is_ok:
