@@ -259,198 +259,178 @@ def set_gaussian_channel_values(all_vnodes, transmitted_codeword_bits, N0, ampli
 
 def LDPC_decode_llr(all_vnodes, all_cnodes, initial_channel_llrs, max_iter):
     """
-    Decodifica uma palavra código LDPC usando o algoritmo de Propagação de Crença com LLRs.
-    Inclui um critério de parada antecipada baseado no produto dos sinais das mensagens L_{v->c}
-    que entram nos C-nodes.
+    Decodifica uma palavra código LDPC seguindo estritamente a sequência do "Algoritmo",
+    usando o critério de parada "produto dos sinais" nos C-nodes.
 
     Args:
         all_vnodes (list): Lista de objetos VNode do grafo.
         all_cnodes (list): Lista de objetos CNode do grafo.
-        initial_channel_llrs (list): Lista dos LLRs provenientes do canal (Lc) para cada v-node.
-        max_iter (int): Número máximo de iterações de decodificação.
+        initial_channel_llrs (list): LLRs do canal para cada v-node.
+        max_iter (int): Número máximo de iterações.
 
     Returns:
         list of int: A palavra código decodificada (0s e 1s).
     """
-
     N = len(all_vnodes)
-    if N == 0:
-        return []
+    if N == 0: return []
     if len(initial_channel_llrs) != N:
-        raise ValueError("O número de LLRs do canal deve ser igual ao número de V-nodes.")
+        raise ValueError("Número de LLRs do canal não corresponde ao número de V-nodes.")
 
-    # --- A. Inicialização Fora do Loop ---
-    # Atribuir LLRs do canal aos V-nodes e inicializar storage de mensagens
+    # Passo 1 & 2 do Algoritmo são feitos antes: LLRs do canal são `initial_channel_llrs`.
+    # Atribuir LLRs do canal aos V-nodes.
     for i, vnode in enumerate(all_vnodes):
         vnode.llr_channel = initial_channel_llrs[i]
-        # vnode.initialize_llr_storage() # Já deve ter sido chamado após a criação do grafo
+        # As listas de mensagens (mensagens_entrada_llr, mensagens_saida_llr)
+        # já devem ter sido inicializadas com zeros após a criação do grafo.
+        # Na primeira iteração, vnode.mensagens_entrada_llr (L_{c->v}) serão 0.0.
 
-    # for cnode in all_cnodes: # Já deve ter sido chamado após a criação do grafo
-        # cnode.initialize_llr_storage()
-
-    # Mensagens iniciais de V-node para C-node (baseadas apenas no canal): L_{v->c} = Lc(v)
-    # Estas serão as primeiras mensagens de entrada para os C-nodes na primeira iteração.
-    for vnode in all_vnodes:
-        for c_conn_idx in range(vnode.dv):
-            vnode.mensagens_saida_llr[c_conn_idx] = vnode.llr_channel
-
-    # --- B. Loop Iterativo ---
+    # Passo 3 do Algoritmo: Inicie o contador de iterações.
     for iteration in range(max_iter):
-        # print(f"\nIteração {iteration + 1}")
+        # print(f"\nIteração {iteration + 1}/{max_iter}")
 
-        # --- ETAPA 1: Propagação de V-nodes para C-nodes (L_{v->c} para L_{c<-v}) ---
-        # As vnode.mensagens_saida_llr (calculadas na iteração anterior ou na inicialização)
-        # tornam-se as cnode.mensagens_entrada_llr.
-        for vnode in all_vnodes:
-            for c_conn_idx, target_cnode in enumerate(vnode.c_nodes):
-                try:
-                    v_idx_in_cnode = target_cnode.v_nodes.index(vnode)
-                    target_cnode.mensagens_entrada_llr[v_idx_in_cnode] = vnode.mensagens_saida_llr[c_conn_idx]
-                except ValueError:
-                    raise RuntimeError(f"Erro de consistência do grafo: VNode {vnode} não encontrado em CNode {target_cnode} ao qual deveria estar conectado.")
-
-        # --- ETAPA 2: Cálculo nos C-nodes (mensagens C-node para V-node: L_{c->v}) ---
-        # L^s_i ≈ min_{j!=i} |L^e_j| * product_{j!=i} sign(L^e_j)
-        # As saídas são armazenadas em cnode.mensagens_saida_llr
-        for cnode in all_cnodes:
-            if cnode.dc == 0: continue
-            for v_target_idx in range(cnode.dc):
-                min_abs_llr_others = float('inf')
-                prod_signs_others = 1.0
-                num_other_edges = 0
-                for v_source_idx in range(cnode.dc):
-                    if v_source_idx == v_target_idx: continue
-                    incoming_llr = cnode.mensagens_entrada_llr[v_source_idx] # L_{v->c}
-                    min_abs_llr_others = min(min_abs_llr_others, abs(incoming_llr))
-                    prod_signs_others *= np.sign(incoming_llr) if incoming_llr != 0 else 1.0
-                    num_other_edges +=1
-                
-                if num_other_edges == 0:
-                    cnode.mensagens_saida_llr[v_target_idx] = 0.0
-                elif cnode.dc == 2: # Caso especial dc=2, Ls_1 = Le_2 (o único 'outro')
-                                    # num_other_edges será 1
-                    idx_other = 1 - v_target_idx # Se v_target_idx=0, outro=1; se v_target_idx=1, outro=0
-                    cnode.mensagens_saida_llr[v_target_idx] = cnode.mensagens_entrada_llr[idx_other]
-                else:
-                    cnode.mensagens_saida_llr[v_target_idx] = prod_signs_others * min_abs_llr_others
-        
-        # --- ETAPA 3: Propagação de C-nodes para V-nodes (L_{c->v} para L_{v<-c}) ---
-        # As cnode.mensagens_saida_llr (calculadas na ETAPA 2)
-        # tornam-se as vnode.mensagens_entrada_llr.
-        for cnode in all_cnodes:
-            for v_conn_idx, target_vnode in enumerate(cnode.v_nodes):
-                try:
-                    c_idx_in_vnode = target_vnode.c_nodes.index(cnode)
-                    target_vnode.mensagens_entrada_llr[c_idx_in_vnode] = cnode.mensagens_saida_llr[v_conn_idx]
-                except ValueError:
-                     raise RuntimeError(f"Erro de consistência do grafo: CNode {cnode} não encontrado em VNode {target_vnode}...")
-
-        # --- ETAPA 4: Cálculo nos V-nodes (mensagens V-node para C-node: L_{v->c}) ---
-        # L^s_i = Lc + sum_{j=1,j!=i}^{dv} L^e_j
-        # As saídas são armazenadas em vnode.mensagens_saida_llr (para a próxima iteração ou checagem)
+        # --- Passo 4 do Algoritmo: Cálculo das mensagens de SAÍDA dos V-nodes (L_{v->c}) ---
+        # L_{v->c_j} = Lc(v) + sum(L_{c_k->v} para k != j)
+        # vnode.mensagens_entrada_llr contém as L_{c->v} da iteração anterior (ou 0.0 na primeira).
+        # vnode.mensagens_saida_llr vai armazenar as L_{v->c} recém calculadas.
         for vnode in all_vnodes:
             if vnode.dv == 0: continue
-            for c_target_idx in range(vnode.dv):
+            for c_target_idx in range(vnode.dv): # Para cada aresta de saída j (para c_nodes[c_target_idx])
                 sum_llr_from_other_cnodes = 0.0
-                for c_source_idx in range(vnode.dv):
-                    if c_source_idx == c_target_idx: continue
-                    sum_llr_from_other_cnodes += vnode.mensagens_entrada_llr[c_source_idx] # L_{c->v}
+                for c_source_idx in range(vnode.dv): # Para cada aresta de entrada k
+                    if c_source_idx == c_target_idx: # k != j
+                        continue
+                    sum_llr_from_other_cnodes += vnode.mensagens_entrada_llr[c_source_idx]
                 vnode.mensagens_saida_llr[c_target_idx] = vnode.llr_channel + sum_llr_from_other_cnodes
-
-        # --- ETAPA 5: Critérios de Parada ---
-
-        # --- 5.A: Critério de Parada Antecipada (Produto dos Sinais das L_{v->c} entrando nos C-nodes) ---
-        # Para esta checagem, precisamos transferir as L_{v->c} recém calculadas na ETAPA 4
-        # para as entradas temporárias dos C-nodes para a verificação.
-        # Ou, mais simplesmente, iterar pelos C-nodes e, para cada V-node conectado,
-        # pegar a mensagem L_{v->c} que aquele V-node teria enviado.
-
-        all_cnodes_satisfied_by_sign_product = True
-        for cnode_check in all_cnodes:
-            if cnode_check.dc == 0: continue
-            
-            product_of_signs_at_cnode_input = 1.0
-            for v_node_connected_to_cnode in cnode_check.v_nodes:
-                # Encontrar qual mensagem L_{v->c} este v_node_connected_to_cnode
-                # acabou de calcular para este cnode_check na ETAPA 4.
-                # A mensagem está em v_node_connected_to_cnode.mensagens_saida_llr[índice_de_cnode_check]
-                try:
-                    idx_of_cnode_check_in_vnode = v_node_connected_to_cnode.c_nodes.index(cnode_check)
-                    llr_v_to_c = v_node_connected_to_cnode.mensagens_saida_llr[idx_of_cnode_check_in_vnode]
-                    product_of_signs_at_cnode_input *= np.sign(llr_v_to_c) if llr_v_to_c != 0 else 1.0
-                except ValueError:
-                    raise RuntimeError(f"Erro de consistência: CNode {cnode_check} não encontrado nas conexões de VNode {v_node_connected_to_cnode}")
-            
-            if product_of_signs_at_cnode_input < 0: # Se negativo, paridade não satisfeita por este C-node
-                all_cnodes_satisfied_by_sign_product = False
-                break
         
-        if all_cnodes_satisfied_by_sign_product:
-            # print(f"  Critério de produto dos sinais (L_v->c) satisfeito na iteração {iteration + 1}.")
-            # Se este critério for satisfeito, a informação extrínseca L_{v->c} é consistente.
-            # Agora, fazemos a decisão final de bits usando os LLRs a posteriori e retornamos.
+        # Agora, vnode.mensagens_saida_llr contém as mensagens L_{v->c} atuais.
+
+        # --- Passo 5 do Algoritmo: Teste se o critério de parada foi atingido ---
+        # Critério 2: "para todos c_nodes, o produto de todas as mensagens chegando no node tem que ser positivo."
+        # As "mensagens chegando no C-node" são as L_{v->c} que acabamos de calcular.
+        
+        all_cnodes_ok_by_product_of_signs = True
+        if not all_cnodes: # Se não há C-nodes (N pequeno, ou M=0)
+            all_cnodes_ok_by_product_of_signs = False # Não pode satisfazer se não há C-nodes
+                                                    # Ou, alternativamente, poderia ser True se não há restrições.
+                                                    # Vamos assumir que se M=0, não há palavra válida a checar.
+                                                    # No entanto, o grafo LDPC válido deve ter M > 0.
+        
+        for cnode_check in all_cnodes:
+            if cnode_check.dc == 0: # C-node não conectado, não impõe restrição
+                continue
             
-            final_decoded_bits_on_sign_check = [0] * N
-            for i, vnode_decision in enumerate(all_vnodes):
-                # O LLR a posteriori usa Lc + sum(L_{c->v})
-                # As vnode_decision.mensagens_entrada_llr contêm as L_{c->v} da ETAPA 3.
-                sum_all_incoming_c_llrs = sum(vnode_decision.mensagens_entrada_llr)
-                app_llr = vnode_decision.llr_channel + sum_all_incoming_c_llrs
-                final_decoded_bits_on_sign_check[i] = 0 if app_llr >= 0 else 1
+            product_of_incoming_signs = 1.0
+            for v_node_source in cnode_check.v_nodes:
+                # Encontrar a mensagem L_{v->c} que v_node_source enviou para cnode_check.
+                # Esta mensagem está em v_node_source.mensagens_saida_llr[índice_de_cnode_check]
+                try:
+                    idx_of_cnode_in_vsource = v_node_source.c_nodes.index(cnode_check)
+                    llr_v_to_c = v_node_source.mensagens_saida_llr[idx_of_cnode_in_vsource]
+                    product_of_incoming_signs *= np.sign(llr_v_to_c) if llr_v_to_c != 0 else 1.0
+                except ValueError:
+                    # Este erro não deveria acontecer se o grafo estiver consistente
+                    raise RuntimeError(f"Consistência do grafo: CNode {cnode_check} não encontrado em VNode {v_node_source}")
             
-            # Como uma garantia extra, ainda é bom verificar a síndrome desta palavra.
-            # Se o produto dos sinais foi satisfeito E a palavra decodificada é válida, retorne.
-            is_truly_valid_codeword = True
+            if product_of_incoming_signs < 0: # Se produto < 0, significa um nº ímpar de LLRs negativos
+                all_cnodes_ok_by_product_of_signs = False
+                break # Um C-node não satisfeito é suficiente
+
+        if all_cnodes_ok_by_product_of_signs and all_cnodes: # E há C-nodes para verificar
+            # print(f"  Critério 'produto dos sinais L_v->c' satisfeito na iteração {iteration + 1}. Pulando para decisão final.")
+            # Pular para o Passo 8 (Decisão Final)
+            # A decisão final usa Lc + sum(L_{c->v}).
+            # As L_{c->v} que temos são as vnode.mensagens_entrada_llr (da iteração anterior).
+            # Se o critério de produto dos sinais das L_{v->c} é satisfeito, isso implica
+            # que a próxima atualização dos C-nodes (Passo 6) provavelmente geraria L_{c->v}
+            # que também seriam consistentes.
+            # Para tomar a decisão *agora*, usamos as L_{c->v} mais recentes disponíveis,
+            # que são as vnode.mensagens_entrada_llr (da iteração anterior, ou 0s na primeira).
+            
+            decoded_bits = [0] * N
+            for i_vn, vn_decision in enumerate(all_vnodes):
+                sum_incoming_c_llrs_for_decision = sum(vn_decision.mensagens_entrada_llr) # L_{c->v}
+                app_llr = vn_decision.llr_channel + sum_incoming_c_llrs_for_decision
+                decoded_bits[i_vn] = 0 if app_llr >= 0 else 1
+            
+            # Verificação de segurança: a palavra decodificada realmente satisfaz a síndrome?
+            # Esta etapa é uma boa prática, mesmo que o critério do produto dos sinais tenha passado.
+            is_codeword_truly_valid = True
+            if not all_cnodes: is_codeword_truly_valid = False # Ou True, se N=K
+
             for cnode_verify in all_cnodes:
                 current_parity_sum = 0
                 for v_conn_verify in cnode_verify.v_nodes:
-                    idx_global_v = all_vnodes.index(v_conn_verify) # Assume all_vnodes é a lista global
-                    current_parity_sum = (current_parity_sum + final_decoded_bits_on_sign_check[idx_global_v]) % 2
+                    idx_global_v = all_vnodes.index(v_conn_verify)
+                    current_parity_sum = (current_parity_sum + decoded_bits[idx_global_v]) % 2
                 if current_parity_sum != 0:
-                    is_truly_valid_codeword = False
+                    is_codeword_truly_valid = False
                     break
             
-            if is_truly_valid_codeword:
-                # print(f"  Palavra decodificada após produto dos sinais é válida. Retornando.")
-                return final_decoded_bits_on_sign_check
+            if is_codeword_truly_valid:
+                # print("    Palavra decodificada é válida pela síndrome. Retornando.")
+                return decoded_bits
+            # else:
+                # print("    Aviso: Produto dos sinais OK, mas síndrome da palavra decodificada falhou. Continuando iterações.")
+                # Se a síndrome falhar aqui, não paramos e continuamos as iterações.
 
-        # --- 5.B: Seu Critério de Parada Original (Checagem de Síndrome nos bits dos APP LLRs) ---
-        # Se o critério 5.A não levou a um retorno, continuamos com a checagem de síndrome padrão.
-        # Calcular LLRs finais (a posteriori) para cada bit
-        # As vnode.mensagens_entrada_llr já contêm as L_{c->v} corretas da ETAPA 3.
-        tentative_decoded_bits = [0] * N
-        for i, vnode in enumerate(all_vnodes):
-            sum_all_incoming_c_llrs = sum(vnode.mensagens_entrada_llr) # L_{c->v}
-            app_llr = vnode.llr_channel + sum_all_incoming_c_llrs
-            tentative_decoded_bits[i] = 0 if app_llr >= 0 else 1
-
-        # Checar todas as equações de paridade
-        all_checks_pass_syndrome = True
-        for cnode in all_cnodes:
-            current_parity_sum = 0
-            for v_conn in cnode.v_nodes:
+        # Se o critério de parada NÃO foi atingido (ou a palavra decodificada não era válida):
+        # --- Transferência das L_{v->c} para as entradas dos C-nodes ---
+        # (Necessário para o Passo 6)
+        # As vnode.mensagens_saida_llr (L_{v->c} do Passo 4) tornam-se cnode.mensagens_entrada_llr.
+        for vnode_transfer in all_vnodes:
+            for c_conn_idx, target_cnode in enumerate(vnode_transfer.c_nodes):
                 try:
-                    idx_global_v = all_vnodes.index(v_conn)
-                    current_parity_sum = (current_parity_sum + tentative_decoded_bits[idx_global_v]) % 2
+                    v_idx_in_cnode = target_cnode.v_nodes.index(vnode_transfer)
+                    target_cnode.mensagens_entrada_llr[v_idx_in_cnode] = vnode_transfer.mensagens_saida_llr[c_conn_idx]
                 except ValueError:
-                     raise RuntimeError(f"Erro de consistência do grafo: VNode {v_conn} ...")
-            if current_parity_sum != 0:
-                all_checks_pass_syndrome = False
-                break
+                     raise RuntimeError(f"Consistência do grafo: VNode {vnode_transfer} não encontrado em CNode {target_cnode}")
+
+        # --- Passo 6 do Algoritmo: Cálculo das mensagens de SAÍDA dos C-nodes (L_{c->v}) ---
+        # L_{c->v_i} ≈ min_{k!=i} |L_{v_k->c}| * product_{k!=i} sign(L_{v_k->c})
+        # cnode.mensagens_entrada_llr agora contém as L_{v->c} corretas.
+        # cnode.mensagens_saida_llr vai armazenar as L_{c->v} recém calculadas.
+        for cnode in all_cnodes:
+            if cnode.dc == 0: continue
+            for v_target_idx in range(cnode.dc): # Para cada aresta de saída i (para v_nodes[v_target_idx])
+                min_abs_llr_others = float('inf')
+                prod_signs_others = 1.0
+                for v_source_idx in range(cnode.dc): # Para cada aresta de entrada k
+                    if v_source_idx == v_target_idx: # k != i
+                        continue
+                    incoming_llr = cnode.mensagens_entrada_llr[v_source_idx]
+                    min_abs_llr_others = min(min_abs_llr_others, abs(incoming_llr))
+                    prod_signs_others *= np.sign(incoming_llr) if incoming_llr != 0 else 1.0
+                
+                if cnode.dc == 1: # Grau 1, sem "outros"
+                    cnode.mensagens_saida_llr[v_target_idx] = 0.0
+                elif cnode.dc == 2: # Grau 2
+                    idx_other = 1 - v_target_idx
+                    cnode.mensagens_saida_llr[v_target_idx] = cnode.mensagens_entrada_llr[idx_other]
+                else: # Grau > 2
+                    cnode.mensagens_saida_llr[v_target_idx] = prod_signs_others * min_abs_llr_others
         
-        if all_checks_pass_syndrome:
-            # print(f"  Critério de síndrome satisfeito na iteração {iteration + 1}. Retornando.")
-            return tentative_decoded_bits
+        # --- Transferência das L_{c->v} para as entradas dos V-nodes ---
+        # (Necessário para o Passo 4 da PRÓXIMA iteração)
+        # As cnode.mensagens_saida_llr (L_{c->v} do Passo 6) tornam-se vnode.mensagens_entrada_llr.
+        for cnode_transfer in all_cnodes:
+            for v_conn_idx, target_vnode in enumerate(cnode_transfer.v_nodes):
+                try:
+                    c_idx_in_vnode = target_vnode.c_nodes.index(cnode_transfer)
+                    target_vnode.mensagens_entrada_llr[c_idx_in_vnode] = cnode_transfer.mensagens_saida_llr[v_conn_idx]
+                except ValueError:
+                    raise RuntimeError(f"Consistência do grafo: CNode {cnode_transfer} não encontrado em VNode {target_vnode}")
 
-    # --- C. Decisão Final (após max_iter se nenhum critério de parada antecipada foi atingido) ---
-    # print(f"Máximo de iterações ({max_iter}) atingido.")
+        # Passo 7 do Algoritmo: "Incremente ... e retorne ao passo 4" é feito pelo loop `for`.
+
+    # --- Passo 8 do Algoritmo: Decida sobre os bits transmitidos (após max_iter) ---
+    # print(f"Máximo de iterações ({max_iter}) atingido. Decisão final.")
     final_decoded_bits = [0] * N
-    for i, vnode in enumerate(all_vnodes):
-        # As vnode.mensagens_entrada_llr contêm as L_{c->v} da última iteração.
-        sum_all_incoming_c_llrs = sum(vnode.mensagens_entrada_llr)
-        final_llr = vnode.llr_channel + sum_all_incoming_c_llrs
-        final_decoded_bits[i] = 0 if final_llr >= 0 else 1
-
+    for i_vn_final, vn_final_decision in enumerate(all_vnodes):
+        # vnode.mensagens_entrada_llr contém as L_{c->v} da última iteração.
+        sum_incoming_c_llrs_final = sum(vn_final_decision.mensagens_entrada_llr)
+        app_llr_final = vn_final_decision.llr_channel + sum_incoming_c_llrs_final
+        final_decoded_bits[i_vn_final] = 0 if app_llr_final >= 0 else 1
+        
     return final_decoded_bits
 
 def eb_n0_dB_to_N0(eb_n0_db_value, code_rate, amplitude=1.0):
