@@ -5,17 +5,18 @@ import os
 import time
 import csv
 import math
+import numpy as np
 
 
 class VNode:
     def __init__(self):
         self.val_r = 0
-        self.llr = 0
+        self.llr_channel = 0
         self.c_nodes = []
-        self.mensagens_entrada = []
-        self.mensagens_saida = []
+        self.mensagens_entrada_llr = [] # LLRs recebidos dos C-nodes
+        self.mensagens_saida_llr = []   # LLRs a serem enviados para os C-nodes
         self.dv = 0
-        self.count_odd_c_node = 0
+        # self.count_odd_c_node = 0
 
     def add_c_node(self, cnode):
         if not isinstance(cnode, CNode):
@@ -23,20 +24,30 @@ class VNode:
         self.c_nodes.append(cnode)
         self.dv = len(self.c_nodes)
 
+    def initialize_llr_storage(self):
+        """Chamado após todas as conexões serem feitas para alocar as listas de mensagens."""
+        self.mensagens_entrada_llr = [0.0] * self.dv
+        self.mensagens_saida_llr = [0.0] * self.dv
+
 
 class CNode:
     def __init__(self):
         self.v_nodes = []
-        self.mensagens_entrada = []
-        self.mensagens_saida = []
+        self.mensagens_entrada_llr = [] # LLRs recebidos dos V-nodes
+        self.mensagens_saida_llr = []   # LLRs a serem enviados para os V-nodes
         self.dc = 0
-        self.parid_check = 0
+        # self.parid_check = 0
 
     def add_v_node(self, vnode):
         if not isinstance(vnode, VNode):
             raise TypeError("Esperado um objeto do tipo VNode")
         self.v_nodes.append(vnode)
         self.dc = len(self.v_nodes)
+
+    def initialize_llr_storage(self):
+        """Chamado após todas as conexões serem feitas para alocar as listas de mensagens."""
+        self.mensagens_entrada_llr = [0.0] * self.dc
+        self.mensagens_saida_llr = [0.0] * self.dc
 
 def LDPC(dv, dc, N):
     N = N - (N % dc)
@@ -139,7 +150,7 @@ def LDPC(dv, dc, N):
     # for i, cnode in enumerate(all_cnodes):
     #     if cnode.dc != dc:
     #         print(f"Alerta: CNode {i} tem grau {cnode.dc}, esperado {dc}")
-
+    save_graph_to_csv(all_vnodes, all_cnodes)
 
     return all_vnodes, all_cnodes
 
@@ -209,218 +220,436 @@ def save_graph_to_csv(all_vnodes, all_cnodes, filename="ldpc_graph.csv"):
 
     print(f"Grafo salvo em {full_path} com índices baseados em 1.")
 
-def set_gaussian_channel_values(all_vnodes, N0):
+def set_gaussian_channel_values(all_vnodes, transmitted_codeword_bits, N0, amplitude=1.0):
     """
-    Atribui a cada vnode.val_r um valor amostrado de uma distribuição
-    Gaussiana com média 1 e variância especificada.
+    Simula o canal AWGN para uma dada palavra código transmitida e calcula os LLRs do canal.
 
     Args:
         all_vnodes (list): Uma lista de objetos VNode.
-        variance (float): A variância da distribuição Gaussiana.
-                          Deve ser um valor não-negativo.
+        transmitted_codeword_bits (list of int): Lista de bits (0 ou 1) da palavra código transmitida.
+        N0 (float): Densidade espectral de potência do ruído (unilateral).
+        amplitude (float): Amplitude do sinal BPSK (e.g., 1.0).
     """
-    variance = N0/2
-    if not isinstance(all_vnodes, list):
-        raise TypeError("O argumento 'all_vnodes' deve ser uma lista.")
-    if not all(isinstance(vn, VNode) for vn in all_vnodes):
-        raise TypeError("Todos os elementos em 'all_vnodes' devem ser instâncias de VNode.")
-    if not isinstance(variance, (int, float)):
-        raise TypeError("O argumento 'variance' deve ser um número.")
-    if variance < 0:
-        raise ValueError("A variância não pode ser negativa.")
+    if len(all_vnodes) != len(transmitted_codeword_bits):
+        raise ValueError("Número de vnodes deve ser igual ao tamanho da palavra código transmitida.")
 
-    mean = 1.0
-    std_dev = math.sqrt(variance) # Desvio padrão é a raiz quadrada da variância
+    variance = N0 / 2.0
+    if variance <= 0: # Adicionado para robustez se N0 for 0 ou negativo
+        # Em um canal sem ruído, os LLRs seriam +/- infinito.
+        # Para evitar divisão por zero, atribuímos LLRs grandes baseados no sinal ideal.
+        print("Aviso: Variância do canal <= 0. LLRs podem ser instáveis.")
+        for i, vnode in enumerate(all_vnodes):
+            transmitted_symbol = amplitude if transmitted_codeword_bits[i] == 0 else -amplitude
+            vnode.val_r = transmitted_symbol # Valor recebido sem ruído
+            # LLR muito grande se não houver ruído, o sinal indica o bit certo
+            vnode.llr_channel = 100.0 * np.sign(transmitted_symbol) if transmitted_symbol != 0 else 0.0
+        return
 
+    std_dev = math.sqrt(variance)
+
+    for i, vnode in enumerate(all_vnodes):
+        # Mapeia bit para símbolo: bit 0 -> +amplitude, bit 1 -> -amplitude
+        mean_signal = amplitude if transmitted_codeword_bits[i] == 0 else -amplitude
+        
+        vnode.val_r = random.gauss(mean_signal, std_dev) # r = s_transmitido + n
+        
+        # Lc = 2 * r * A / variance_noise  (onde variance_noise = N0/2)
+        # ou Lc = 4 * r * A / N0
+        vnode.llr_channel = (2 * vnode.val_r * amplitude) / variance
+
+def LDPC_decode_llr(all_vnodes, all_cnodes, initial_channel_llrs, max_iter):
+    """
+    Decodifica uma palavra código LDPC usando o algoritmo de Propagação de Crença com LLRs.
+    Inclui um critério de parada antecipada baseado no produto dos sinais das mensagens L_{v->c}
+    que entram nos C-nodes.
+
+    Args:
+        all_vnodes (list): Lista de objetos VNode do grafo.
+        all_cnodes (list): Lista de objetos CNode do grafo.
+        initial_channel_llrs (list): Lista dos LLRs provenientes do canal (Lc) para cada v-node.
+        max_iter (int): Número máximo de iterações de decodificação.
+
+    Returns:
+        list of int: A palavra código decodificada (0s e 1s).
+    """
+
+    N = len(all_vnodes)
+    if N == 0:
+        return []
+    if len(initial_channel_llrs) != N:
+        raise ValueError("O número de LLRs do canal deve ser igual ao número de V-nodes.")
+
+    # --- A. Inicialização Fora do Loop ---
+    # Atribuir LLRs do canal aos V-nodes e inicializar storage de mensagens
+    for i, vnode in enumerate(all_vnodes):
+        vnode.llr_channel = initial_channel_llrs[i]
+        # vnode.initialize_llr_storage() # Já deve ter sido chamado após a criação do grafo
+
+    # for cnode in all_cnodes: # Já deve ter sido chamado após a criação do grafo
+        # cnode.initialize_llr_storage()
+
+    # Mensagens iniciais de V-node para C-node (baseadas apenas no canal): L_{v->c} = Lc(v)
+    # Estas serão as primeiras mensagens de entrada para os C-nodes na primeira iteração.
     for vnode in all_vnodes:
-        # random.gauss(mu, sigma) gera um número aleatório da distribuição Gaussiana
-        # com média mu e desvio padrão sigma.
-        vnode.val_r = random.gauss(mean, std_dev)
-        vnode.llr = 2*vnode.val_r/variance
+        for c_conn_idx in range(vnode.dv):
+            vnode.mensagens_saida_llr[c_conn_idx] = vnode.llr_channel
 
-[all_vnodes, all_cnodes]= LDPC(3,7,1000)
-set_gaussian_channel_values(all_vnodes, 0.5)
-print([vnode.val_r for vnode in all_vnodes])
-print([vnode.llr for vnode in all_vnodes])
-save_graph_to_csv(all_vnodes, all_cnodes)
+    # --- B. Loop Iterativo ---
+    for iteration in range(max_iter):
+        # print(f"\nIteração {iteration + 1}")
 
-# for i, vnode in enumerate(all_vnodes):
-#     c_indices = [ all_cnodes.index(cnode) for cnode in vnode.c_nodes ]
-#     print(f"VNode {i}: conectado a CNodes {c_indices}")
+        # --- ETAPA 1: Propagação de V-nodes para C-nodes (L_{v->c} para L_{c<-v}) ---
+        # As vnode.mensagens_saida_llr (calculadas na iteração anterior ou na inicialização)
+        # tornam-se as cnode.mensagens_entrada_llr.
+        for vnode in all_vnodes:
+            for c_conn_idx, target_cnode in enumerate(vnode.c_nodes):
+                try:
+                    v_idx_in_cnode = target_cnode.v_nodes.index(vnode)
+                    target_cnode.mensagens_entrada_llr[v_idx_in_cnode] = vnode.mensagens_saida_llr[c_conn_idx]
+                except ValueError:
+                    raise RuntimeError(f"Erro de consistência do grafo: VNode {vnode} não encontrado em CNode {target_cnode} ao qual deveria estar conectado.")
 
-# def BSC_bit_flip(all_vnodes, p):
-#     for vnode in all_vnodes:
-#         if random.random() < p:
-#             vnode.val_r ^= 1  # Flip: 0 vira 1 e 1 vira 0
-
-# def Lista_N(dc = 7):
-#     valores = [100, 200, 500, 1000]
-#     maiores_multiplos = [] 
-#     for v in valores:
-#         maior_multiplo = v - (v % dc)
-#         maiores_multiplos.append(maior_multiplo)
-#     return maiores_multiplos
-
-# def generate_vector_p():
-#     p = [0.5, 0.2, 0.1]
-#     q = [0.5, 0.2, 0.1]
-#     for i in range(1,5):
-#       for j in range(3):
-#         q[j] = q[j]/10
-#         p.append(q[j])
-#     return p
-
-# def cnodes_parid_check(all_cnodes):
-#     for cnode in all_cnodes:
-#         cnode.parid_check = 0
-#         for vnode in cnode.v_nodes:
-#             cnode.parid_check = (cnode.parid_check + vnode.val_r) % 2
-
-# def vnodes_bit_ajust(all_vnodes):
-#     is_ok = True
-#     vnode_to_ajust = all_vnodes[0]
-#     for vnode in all_vnodes:
-#         vnode.count_odd_c_node = 0
-#         for cnode in vnode.c_nodes:
-#             vnode.count_odd_c_node += cnode.parid_check
-#         if vnode.count_odd_c_node > 0:
-#             is_ok = False
-#         if vnode.count_odd_c_node > vnode_to_ajust.count_odd_c_node:
-#             vnode_to_ajust = vnode
-#     if not is_ok:
-#         vnode_to_ajust.val_r = (vnode_to_ajust.val_r + 1) % 2
-#     return is_ok
-
-# def LDPC_decode(dc, dv):
-#     # dc = 7
-#     # dv = 3
-#     possiveis_P = generate_vector_p()
-#     possiveis_N = Lista_N(dc)
-
-#     templates = {}
-#     for N in possiveis_N:
-#         print(f'templare relativo a {N} criado')
-#         templates[N] = LDPC(dv, dc, N)
-
-#     num_N = len(possiveis_N)
-#     num_P = len(possiveis_P)
-#     monte_carlo_runs = 1000
-
-#     # Inicializa os vetores de probabilidade para cada N
-#     prob_n0 = [0.0] * num_P
-#     prob_n1 = [0.0] * num_P
-#     prob_n2 = [0.0] * num_P
-#     prob_n3 = [0.0] * num_P
-
-#     prob_n = [prob_n0, prob_n1, prob_n2, prob_n3]
-
-   
-    
-
-#     for idx_p, p in enumerate(possiveis_P):
-#         for idx_n, N in enumerate(possiveis_N):
-#             total_bits = 0
-#             total_bits_errados = 0
-#             all_vnodes, all_cnodes = templates[N]
-
-#             for _ in range(monte_carlo_runs):
-#                 for vnode in all_vnodes:
-#                     vnode.val_r = 0
-#                     vnode.count_odd_c_node = 0
-
-#                 for cnode in all_cnodes:
-#                     cnode.parid_check = 0
-#                 BSC_bit_flip(all_vnodes, p)
-#                 max_iter = 50
-#                 iteration = 0
-#                 while iteration < max_iter:
-#                     # print([vnode.val_r for vnode in all_vnodes])
-#                     # print([cnode.parid_check for cnode in all_cnodes])
-#                     cnodes_parid_check(all_cnodes)
-#                     is_ok = vnodes_bit_ajust(all_vnodes)
-#                     if is_ok:
-#                         break
-#                     iteration += 1
-#                 bits_errados = sum(vnode.val_r for vnode in all_vnodes)
-#                 total_bits_errados += bits_errados
-#                 total_bits += len(all_vnodes)
-#                 # print([vnode.val_r for vnode in all_vnodes])
-#                 # print([cnode.parid_check for cnode in all_cnodes])
-#                 # print(iteration)
-
+        # --- ETAPA 2: Cálculo nos C-nodes (mensagens C-node para V-node: L_{c->v}) ---
+        # L^s_i ≈ min_{j!=i} |L^e_j| * product_{j!=i} sign(L^e_j)
+        # As saídas são armazenadas em cnode.mensagens_saida_llr
+        for cnode in all_cnodes:
+            if cnode.dc == 0: continue
+            for v_target_idx in range(cnode.dc):
+                min_abs_llr_others = float('inf')
+                prod_signs_others = 1.0
+                num_other_edges = 0
+                for v_source_idx in range(cnode.dc):
+                    if v_source_idx == v_target_idx: continue
+                    incoming_llr = cnode.mensagens_entrada_llr[v_source_idx] # L_{v->c}
+                    min_abs_llr_others = min(min_abs_llr_others, abs(incoming_llr))
+                    prod_signs_others *= np.sign(incoming_llr) if incoming_llr != 0 else 1.0
+                    num_other_edges +=1
                 
-#             # Calcula BER para este (p, N)
-#             prob_n[idx_n][idx_p] = total_bits_errados / total_bits
+                if num_other_edges == 0:
+                    cnode.mensagens_saida_llr[v_target_idx] = 0.0
+                elif cnode.dc == 2: # Caso especial dc=2, Ls_1 = Le_2 (o único 'outro')
+                                    # num_other_edges será 1
+                    idx_other = 1 - v_target_idx # Se v_target_idx=0, outro=1; se v_target_idx=1, outro=0
+                    cnode.mensagens_saida_llr[v_target_idx] = cnode.mensagens_entrada_llr[idx_other]
+                else:
+                    cnode.mensagens_saida_llr[v_target_idx] = prod_signs_others * min_abs_llr_others
+        
+        # --- ETAPA 3: Propagação de C-nodes para V-nodes (L_{c->v} para L_{v<-c}) ---
+        # As cnode.mensagens_saida_llr (calculadas na ETAPA 2)
+        # tornam-se as vnode.mensagens_entrada_llr.
+        for cnode in all_cnodes:
+            for v_conn_idx, target_vnode in enumerate(cnode.v_nodes):
+                try:
+                    c_idx_in_vnode = target_vnode.c_nodes.index(cnode)
+                    target_vnode.mensagens_entrada_llr[c_idx_in_vnode] = cnode.mensagens_saida_llr[v_conn_idx]
+                except ValueError:
+                     raise RuntimeError(f"Erro de consistência do grafo: CNode {cnode} não encontrado em VNode {target_vnode}...")
 
-#     total_N = sum(possiveis_N)
-#     prob_geral = []
-#     for idx_p in range(num_P):
-#         weighted_sum = (possiveis_N[0] * prob_n0[idx_p] +
-#                         possiveis_N[1] * prob_n1[idx_p] +
-#                         possiveis_N[2] * prob_n2[idx_p] +
-#                         possiveis_N[3] * prob_n3[idx_p])
-#         prob_geral.append(weighted_sum / total_N)
-   
+        # --- ETAPA 4: Cálculo nos V-nodes (mensagens V-node para C-node: L_{v->c}) ---
+        # L^s_i = Lc + sum_{j=1,j!=i}^{dv} L^e_j
+        # As saídas são armazenadas em vnode.mensagens_saida_llr (para a próxima iteração ou checagem)
+        for vnode in all_vnodes:
+            if vnode.dv == 0: continue
+            for c_target_idx in range(vnode.dv):
+                sum_llr_from_other_cnodes = 0.0
+                for c_source_idx in range(vnode.dv):
+                    if c_source_idx == c_target_idx: continue
+                    sum_llr_from_other_cnodes += vnode.mensagens_entrada_llr[c_source_idx] # L_{c->v}
+                vnode.mensagens_saida_llr[c_target_idx] = vnode.llr_channel + sum_llr_from_other_cnodes
+
+        # --- ETAPA 5: Critérios de Parada ---
+
+        # --- 5.A: Critério de Parada Antecipada (Produto dos Sinais das L_{v->c} entrando nos C-nodes) ---
+        # Para esta checagem, precisamos transferir as L_{v->c} recém calculadas na ETAPA 4
+        # para as entradas temporárias dos C-nodes para a verificação.
+        # Ou, mais simplesmente, iterar pelos C-nodes e, para cada V-node conectado,
+        # pegar a mensagem L_{v->c} que aquele V-node teria enviado.
+
+        all_cnodes_satisfied_by_sign_product = True
+        for cnode_check in all_cnodes:
+            if cnode_check.dc == 0: continue
+            
+            product_of_signs_at_cnode_input = 1.0
+            for v_node_connected_to_cnode in cnode_check.v_nodes:
+                # Encontrar qual mensagem L_{v->c} este v_node_connected_to_cnode
+                # acabou de calcular para este cnode_check na ETAPA 4.
+                # A mensagem está em v_node_connected_to_cnode.mensagens_saida_llr[índice_de_cnode_check]
+                try:
+                    idx_of_cnode_check_in_vnode = v_node_connected_to_cnode.c_nodes.index(cnode_check)
+                    llr_v_to_c = v_node_connected_to_cnode.mensagens_saida_llr[idx_of_cnode_check_in_vnode]
+                    product_of_signs_at_cnode_input *= np.sign(llr_v_to_c) if llr_v_to_c != 0 else 1.0
+                except ValueError:
+                    raise RuntimeError(f"Erro de consistência: CNode {cnode_check} não encontrado nas conexões de VNode {v_node_connected_to_cnode}")
+            
+            if product_of_signs_at_cnode_input < 0: # Se negativo, paridade não satisfeita por este C-node
+                all_cnodes_satisfied_by_sign_product = False
+                break
+        
+        if all_cnodes_satisfied_by_sign_product:
+            # print(f"  Critério de produto dos sinais (L_v->c) satisfeito na iteração {iteration + 1}.")
+            # Se este critério for satisfeito, a informação extrínseca L_{v->c} é consistente.
+            # Agora, fazemos a decisão final de bits usando os LLRs a posteriori e retornamos.
+            
+            final_decoded_bits_on_sign_check = [0] * N
+            for i, vnode_decision in enumerate(all_vnodes):
+                # O LLR a posteriori usa Lc + sum(L_{c->v})
+                # As vnode_decision.mensagens_entrada_llr contêm as L_{c->v} da ETAPA 3.
+                sum_all_incoming_c_llrs = sum(vnode_decision.mensagens_entrada_llr)
+                app_llr = vnode_decision.llr_channel + sum_all_incoming_c_llrs
+                final_decoded_bits_on_sign_check[i] = 0 if app_llr >= 0 else 1
+            
+            # Como uma garantia extra, ainda é bom verificar a síndrome desta palavra.
+            # Se o produto dos sinais foi satisfeito E a palavra decodificada é válida, retorne.
+            is_truly_valid_codeword = True
+            for cnode_verify in all_cnodes:
+                current_parity_sum = 0
+                for v_conn_verify in cnode_verify.v_nodes:
+                    idx_global_v = all_vnodes.index(v_conn_verify) # Assume all_vnodes é a lista global
+                    current_parity_sum = (current_parity_sum + final_decoded_bits_on_sign_check[idx_global_v]) % 2
+                if current_parity_sum != 0:
+                    is_truly_valid_codeword = False
+                    break
+            
+            if is_truly_valid_codeword:
+                # print(f"  Palavra decodificada após produto dos sinais é válida. Retornando.")
+                return final_decoded_bits_on_sign_check
+
+        # --- 5.B: Seu Critério de Parada Original (Checagem de Síndrome nos bits dos APP LLRs) ---
+        # Se o critério 5.A não levou a um retorno, continuamos com a checagem de síndrome padrão.
+        # Calcular LLRs finais (a posteriori) para cada bit
+        # As vnode.mensagens_entrada_llr já contêm as L_{c->v} corretas da ETAPA 3.
+        tentative_decoded_bits = [0] * N
+        for i, vnode in enumerate(all_vnodes):
+            sum_all_incoming_c_llrs = sum(vnode.mensagens_entrada_llr) # L_{c->v}
+            app_llr = vnode.llr_channel + sum_all_incoming_c_llrs
+            tentative_decoded_bits[i] = 0 if app_llr >= 0 else 1
+
+        # Checar todas as equações de paridade
+        all_checks_pass_syndrome = True
+        for cnode in all_cnodes:
+            current_parity_sum = 0
+            for v_conn in cnode.v_nodes:
+                try:
+                    idx_global_v = all_vnodes.index(v_conn)
+                    current_parity_sum = (current_parity_sum + tentative_decoded_bits[idx_global_v]) % 2
+                except ValueError:
+                     raise RuntimeError(f"Erro de consistência do grafo: VNode {v_conn} ...")
+            if current_parity_sum != 0:
+                all_checks_pass_syndrome = False
+                break
+        
+        if all_checks_pass_syndrome:
+            # print(f"  Critério de síndrome satisfeito na iteração {iteration + 1}. Retornando.")
+            return tentative_decoded_bits
+
+    # --- C. Decisão Final (após max_iter se nenhum critério de parada antecipada foi atingido) ---
+    # print(f"Máximo de iterações ({max_iter}) atingido.")
+    final_decoded_bits = [0] * N
+    for i, vnode in enumerate(all_vnodes):
+        # As vnode.mensagens_entrada_llr contêm as L_{c->v} da última iteração.
+        sum_all_incoming_c_llrs = sum(vnode.mensagens_entrada_llr)
+        final_llr = vnode.llr_channel + sum_all_incoming_c_llrs
+        final_decoded_bits[i] = 0 if final_llr >= 0 else 1
+
+    return final_decoded_bits
+
+def eb_n0_dB_to_N0(eb_n0_db_value, code_rate, amplitude=1.0):
+    """
+    Converte Eb/N0 em dB para o valor linear de N0.
+    Assume BPSK onde Eb = A^2 * Tb. Se Tb=1, Eb = A^2.
+    Para códigos, usamos Eb_channel_bit / N0.
+    Se o code_rate R = k/n, então Eb_info_bit = Eb_channel_bit / R.
+    A simulação geralmente trabalha com Eb_channel_bit / N0.
+    Se a entrada eb_n0_db_value é para bits de informação, ajuste é necessário.
+    Assumindo aqui que eb_n0_db_value é para bits de canal (codificados).
+
+    Args:
+        eb_n0_db_value (float): Valor de Eb/N0 em dB.
+        code_rate (float): Taxa do código (k/N). Para LDPC (dv,dc), R = 1 - dv/dc.
+        amplitude (float): Amplitude do sinal BPSK.
+
+    Returns:
+        float: Valor de N0 (densidade espectral de potência do ruído unilateral).
+    """
+    # Eb/N0 (linear)
+    eb_n0_linear = 10**(eb_n0_db_value / 10.0)
     
-#     return prob_n0, prob_n1, prob_n2, prob_n3, prob_geral
+    # Para BPSK, Eb (energia por bit de canal) = A^2 (assumindo Tb=1)
+    # Eb/N0 = A^2 / N0  => N0 = A^2 / (Eb/N0_linear)
+    # N0 = amplitude**2 / eb_n0_linear # Se eb_n0_db_value é para bits de CANAL
 
-# def plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, possiveis_N, filename, error_hamming=None):
-#     vector_p = generate_vector_p()
-
-#     plt.figure(figsize=(10, 6))
-
-#     plt.semilogx(vector_p, prob_n0, marker='o', linestyle='-', label=f'LDPC N={possiveis_N[0]}')
-#     plt.semilogx(vector_p, prob_n1, marker='s', linestyle='--', label=f'LDPC N={possiveis_N[1]}')
-#     plt.semilogx(vector_p, prob_n2, marker='^', linestyle='-.', label=f'LDPC N={possiveis_N[2]}')
-#     plt.semilogx(vector_p, prob_n3, marker='v', linestyle=':', label=f'LDPC N={possiveis_N[3]}')
-#     plt.semilogx(vector_p, prob_geral, marker='x', linestyle='-', label='Média Ponderada')
-#     plt.semilogx(vector_p, vector_p, marker='d', linestyle=':', label='Não codificado')
-#     if error_hamming is not None:
-#         plt.semilogx(vector_p, error_hamming, marker='*', linestyle='--', label='Hamming (7,4)')
-#     plt.yscale('log')
-#     plt.gca().invert_xaxis()
-
-#     plt.xlabel("Probabilidade de erro (p)")
-#     plt.ylabel("Taxa de erro de bits")
-#     plt.title(f"Correção de Erros - LDPC (dv={dv}, dc={dc})")
-#     plt.grid(True, which="both", linestyle="--")
-#     plt.legend()
-
-#     # Salva o gráfico
-#     save_path = os.path.join(os.path.dirname(__file__), filename)
-#     plt.savefig(save_path)
-#     plt.close()
+    # Se eb_n0_db_value refere-se a bits de INFORMAÇÃO:
+    # Eb_info / N0 = (Eb_channel / R) / N0
+    # Então Eb_channel / N0 = (Eb_info / N0) * R
+    eb_channel_n0_linear = eb_n0_linear * code_rate # Ajusta para bit de canal
+    
+    if eb_channel_n0_linear == 0: # Evita divisão por zero se Eb/N0 for -infinito dB
+        return float('inf') # N0 seria infinito (sem sinal)
+    
+    N0 = amplitude**2 / eb_channel_n0_linear
+    return N0
 
 
-# def main():
-#     configs = [
-#         (7, 3, "ldpc_dv3_dc7.png"),   # dv=3, dc=7
-#         (2, 1, "ldpc_dv1_dc2.png"),   # dv=1, dc=2
-#         (3, 2, "ldpc_dv2_dc3.png"),   # dv=2, dc=3
-#     ]
+def run_simulation(dv, dc, N_target, eb_n0_db_range, max_iterations_decoder, num_codewords_to_simulate, amplitude_bpsk=1.0): # Removido min_errors_to_collect
+    """
+    Executa a simulação de Monte Carlo para um código LDPC.
+    Simula um número fixo de palavras-código por ponto Eb/N0.
+    """
+    
+    print(f"### Iniciando Simulação de Monte Carlo para LDPC ({dv},{dc}), N_alvo={N_target} ###")
+    print(f"### Simulando {num_codewords_to_simulate} palavras-código por ponto Eb/N0 ###") # Mensagem atualizada
+    
+    N_actual = N_target - (N_target % dc)
+    if N_actual == 0:
+        print("N_actual resultou em 0. Simulação abortada.")
+        return [], []
+        
+    if dc == 0:
+        print("Erro: dc (grau do C-node) não pode ser zero. Simulação abortada.")
+        return [],[]
+    
+    code_rate_estimate = 1.0 - (dv / dc)
+    if not (0 < code_rate_estimate < 1):
+        M_actual = (N_actual * dv) // dc
+        K_actual = N_actual - M_actual
+        if N_actual > 0 and K_actual > 0:
+            code_rate_estimate = K_actual / N_actual
+            print(f"Aviso: dv={dv}, dc={dc} resulta em taxa fora do comum. Taxa K/N estimada: {code_rate_estimate:.3f}")
+        else:
+            print(f"Alerta Crítico: dv={dv}, dc={dc}, N={N_actual} resulta em K<=0. Usando taxa nominal de 0.5.")
+            code_rate_estimate = 0.5 
+    print(f"Taxa do código (R) estimada: {code_rate_estimate:.3f}")
 
-#     hamming_probs = hamming_simulation()
-#     for dc, dv, filename in configs:
-#         possiveis_N = Lista_N(dc)
-#         print(f"\nRodando simulação para dv={dv}, dc={dc}")
-#         t0 = time.perf_counter()
-#         prob_n0, prob_n1, prob_n2, prob_n3, prob_geral = LDPC_decode(dc=dc, dv=dv)
-#         dt = time.perf_counter() - t0
-#         print(f"Tempo total: {dt:.2f}s")
-#         plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, possiveis_N, filename, hamming_probs)
-#         print(f"Gráfico salvo como {filename}")
+    print(f"Construindo grafo LDPC para N={N_actual} (dv={dv}, dc={dc})...")
+    start_graph_time = time.time()
+    all_vnodes, all_cnodes = LDPC(dv, dc, N_actual)
+    end_graph_time = time.time()
+    if not all_vnodes:
+        print(f"Falha ao gerar o grafo LDPC para N={N_actual}. Simulação abortada.")
+        return [], []
+    print(f"Grafo construído em {end_graph_time - start_graph_time:.2f}s. Inicializando LLR storage...")
+    
+    for vnode in all_vnodes: vnode.initialize_llr_storage()
+    for cnode in all_cnodes: cnode.initialize_llr_storage()
+    print("LLR storage inicializado.")
 
-# main()
-# maior_multiplo = 1000 - (1000 % 7)
-# [all_vnodes, all_cnodes]=LDPC(3,7,maior_multiplo)
+    ber_results = []
+    transmitted_codeword = [0] * N_actual
+
+    print("\n--- Iniciando Loop de Eb/N0 ---")
+    for point_idx, eb_n0_db in enumerate(eb_n0_db_range):
+        N0 = eb_n0_dB_to_N0(eb_n0_db, code_rate_estimate, amplitude_bpsk)
+        print(f"\n[Ponto Eb/N0 {point_idx+1}/{len(eb_n0_db_range)}] Eb/N0 = {eb_n0_db:.2f} dB (N0 = {N0:.3e}, Variância do ruído = {N0/2:.3e})")
+
+        total_bits_simulated_this_point = 0
+        total_bit_errors_this_point = 0
+        
+        start_time_ebn0_point = time.time()
+        for i_codeword in range(num_codewords_to_simulate): # Loop fixo
+            set_gaussian_channel_values(all_vnodes, transmitted_codeword, N0, amplitude_bpsk)
+            initial_llrs_for_decoder = [v.llr_channel for v in all_vnodes]
+            decoded_codeword = LDPC_decode_llr(all_vnodes, all_cnodes, initial_llrs_for_decoder, max_iterations_decoder)
+
+            current_errors = 0
+            for bit_idx in range(N_actual):
+                if transmitted_codeword[bit_idx] != decoded_codeword[bit_idx]:
+                    current_errors += 1
+            
+            total_bit_errors_this_point += current_errors
+            total_bits_simulated_this_point += N_actual
+
+            if (i_codeword + 1) % (max(1, num_codewords_to_simulate // 20)) == 0 or (i_codeword + 1) == num_codewords_to_simulate:
+                 current_ber_estimate = total_bit_errors_this_point / total_bits_simulated_this_point if total_bits_simulated_this_point > 0 else 0
+                 elapsed_time_this_ebn0 = time.time() - start_time_ebn0_point
+                 print(f"    Palavra {i_codeword+1:6d}/{num_codewords_to_simulate:6d} | Erros Bit: {total_bit_errors_this_point:6d} | Total Bits: {total_bits_simulated_this_point:9d} | BER Est.: {current_ber_estimate:.2e} | Tempo: {elapsed_time_this_ebn0:.1f}s")
+            
+            # REMOVIDO o if total_bit_errors_this_point >= min_errors_to_collect ...
+        
+        end_time_ebn0_point = time.time()
+        ber = total_bit_errors_this_point / total_bits_simulated_this_point if total_bits_simulated_this_point > 0 else 0.0
+        ber_results.append(ber)
+        print(f"  Resultado Final para Eb/N0 = {eb_n0_db:.1f} dB: BER = {ber:.4e} (Total Erros: {total_bit_errors_this_point}, Total Bits: {total_bits_simulated_this_point})")
+        print(f"  Tempo para este ponto Eb/N0: {end_time_ebn0_point - start_time_ebn0_point:.2f} segundos.")
+
+    print("\n### Simulação de Monte Carlo Concluída ###")
+    return ber_results, eb_n0_db_range
+
+def plot_ber_vs_ebn0(eb_n0_db_values, ber_values, code_label, filename="ber_ldpc_plot.png"):
+    """
+    Plota BER vs Eb/N0.
+    """
+    plt.figure(figsize=(10, 7))
+    plt.semilogy(eb_n0_db_values, ber_values, marker='o', linestyle='-', label=code_label)
+    
+    # Opcional: Plotar curva não codificada (BPSK teórica)
+    # Q(sqrt(2*Eb/N0))
+    eb_n0_linear_uncoded = [10**(x/10.0) for x in eb_n0_db_values]
+    ber_uncoded_bpsk = [0.5 * math.erfc(math.sqrt(x)) for x in eb_n0_linear_uncoded] # Q(x) = 0.5 * erfc(x/sqrt(2))
+    plt.semilogy(eb_n0_db_values, ber_uncoded_bpsk, marker='s', linestyle='--', label="BPSK Não Codificado (Teórico)")
+
+    plt.xlabel("Eb/N0 (dB)")
+    plt.ylabel("Bit Error Rate (BER)")
+    plt.title(f"Desempenho LDPC: {code_label}")
+    plt.grid(True, which="both", ls="--")
+    plt.legend()
+    plt.ylim(1e-6, 1e0) # Ajuste conforme necessário
+    plt.xlim(min(eb_n0_db_values), max(eb_n0_db_values))
+
+    # Salvar o gráfico
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        script_dir = os.getcwd()
+    full_path = os.path.join(script_dir, filename)
+    plt.savefig(full_path)
+    print(f"Gráfico salvo em: {full_path}")
+    plt.show() # Mostra o gráfico
+
+
+# --- Configurações da Simulação ---
+if __name__ == "__main__":
+    DV = 3
+    DC = 7
+    N = 1000
+    EB_N0_DB_RANGE = np.arange(0.0, 5.1, 0.25).tolist()
+    MAX_DECODER_ITERATIONS = 50
+    
+    # Ajuste NUM_CODEWORDS conforme necessário para o tempo de simulação desejado
+    NUM_CODEWORDS_PER_POINT = 100 # Ou o valor que você usava antes
+    # MIN_ERRORS foi removido da chamada e da função
+
+    AMPLITUDE = 1.0
+
+    print("-" * 50)
+    print(f"INICIANDO SIMULAÇÃO PARA N_TARGET = {N}")
+    start_time = time.time()
+    ber, ebn0 = run_simulation(
+        dv=DV, dc=DC, N_target=N,
+        eb_n0_db_range=EB_N0_DB_RANGE,
+        max_iterations_decoder=MAX_DECODER_ITERATIONS,
+        num_codewords_to_simulate=NUM_CODEWORDS_PER_POINT, # Passando o número fixo
+        amplitude_bpsk=AMPLITUDE
+    )
+    end_time = time.time()
+    print(f"Simulação para N_target={N} concluída em {end_time - start_time:.2f} segundos.")
+    
+    if ber: # Se a simulação produziu resultados
+        plot_ber_vs_ebn0(
+            ebn0, ber,
+            code_label=f"LDPC ({DV},{DC}), N~{N}",
+            filename=f"ber_ldpc_N{N}_dv{DV}_dc{DC}.png"
+        )
+
+    print("-" * 50)
+    print("Todas as simulações concluídas.")
+    
+
+# [all_vnodes, all_cnodes]= LDPC(3,7,1000)
+# for vnode in all_vnodes:
+#     vnode.initialize_llr_storage()
+# for cnode in all_cnodes:
+#     cnode.initialize_llr_storage()
+# set_gaussian_channel_values(all_vnodes, 0.5)
+# print([vnode.val_r for vnode in all_vnodes])
+# print([vnode.llr_channel for vnode in all_vnodes])
 # save_graph_to_csv(all_vnodes, all_cnodes)
-# LDPC(3,7,98)
-# print(Lista_N(dc=2))
-# dc = 7 e dv=3
-
-# [all_vnodes, all_cnodes]= LDPC(3,7,14)
-# for i, vnode in enumerate(all_vnodes):
-#     c_indices = [ all_cnodes.index(cnode) for cnode in vnode.c_nodes ]
-#     print(f"VNode {i}: conectado a CNodes {c_indices}")
-# print(all_vnodes)
-# print(all_cnodes)
