@@ -154,7 +154,7 @@ def LDPC(dv, dc, N):
 
     return all_vnodes, all_cnodes
 
-def save_graph_to_csv(all_vnodes, all_cnodes, filename="ldpc_graph.csv"):
+def save_graph_to_csv(all_vnodes, all_cnodes, filename="ldpc_graph_versao2.csv"):
     """
     Salva a estrutura do grafo LDPC em um arquivo CSV com índices baseados em 1.
     O arquivo CSV é salvo no mesmo diretório que o script Python que contém esta função.
@@ -591,11 +591,11 @@ if __name__ == "__main__":
     DV = 3
     DC = 7
     N = 1000
-    EB_N0_DB_RANGE = np.arange(0.0, 5.1, 0.25).tolist()
+    EB_N0_DB_RANGE = np.arange(0.0, 5.1, 0.5).tolist()
     MAX_DECODER_ITERATIONS = 50
     
     # Ajuste NUM_CODEWORDS conforme necessário para o tempo de simulação desejado
-    NUM_CODEWORDS_PER_POINT = 1000 # Ou o valor que você usava antes
+    NUM_CODEWORDS_PER_POINT = 10000 # Ou o valor que você usava antes
     # MIN_ERRORS foi removido da chamada e da função
 
     AMPLITUDE = 1.0
@@ -617,7 +617,7 @@ if __name__ == "__main__":
         plot_ber_vs_ebn0(
             ebn0, ber,
             code_label=f"LDPC ({DV},{DC}), N~{N}",
-            filename=f"ber_ldpc_N{N}_dv{DV}_dc{DC}.png"
+            filename=f"ber_ldpc_N{N}_dv{DV}_dc{DC}_versao2.png"
         )
 
     print("-" * 50)
