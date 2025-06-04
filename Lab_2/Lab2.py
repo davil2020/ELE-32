@@ -109,78 +109,132 @@ def vnodes_bit_ajust(all_vnodes):
         vnode_to_ajust.val = (vnode_to_ajust.val + 1) % 2
     return is_ok
 
-def LDPC_decode(dc, dv):
+def LDPC_decode(dc, dv, possiveis_P=None, target_N=None):
     # dc = 7
     # dv = 3
-    possiveis_P = generate_vector_p()
-    possiveis_N = Lista_N(dc)
+    print(f"DEBUG LDPC_decode Lab2: `possiveis_P` recebido: {possiveis_P} (Tipo: {type(possiveis_P)})") # D
+    if possiveis_P is None:
+        print("Nenhum `possiveis_P` fornecido, gerando um padrão...")
+        possiveis_P = generate_vector_p()
 
-    templates = {}
-    for N in possiveis_N:
-        print(f'templare relativo a {N} criado')
-        templates[N] = LDPC(dv, dc, N)
+    if target_N is not None:
+        print(f"Simulando LDPC para N específico = {target_N}")
+        N_sim = target_N 
+        
+        print(f"Construindo template para N={N_sim}...")
+        all_vnodes, all_cnodes = LDPC(dv, dc, N_sim)
+        
+        if not all_vnodes:
+            print(f"Não foi possível criar um grafo para N={N_sim} com dv={dv}, dc={dc}. Retornando lista de BER vazia.")
+            return [] # Ou levante um erro, ou retorne None
 
-    num_N = len(possiveis_N)
-    num_P = len(possiveis_P)
-    monte_carlo_runs = 10000
+        N_actual = len(all_vnodes)
+        if N_actual == 0: # Checagem extra
+            print(f"Template para N={N_sim} resultou em 0 vnodes. Retornando lista de BER vazia.")
+            return []
 
-    # Inicializa os vetores de probabilidade para cada N
-    prob_n0 = [0.0] * num_P
-    prob_n1 = [0.0] * num_P
-    prob_n2 = [0.0] * num_P
-    prob_n3 = [0.0] * num_P
+        print(f"Template criado para N_actual={N_actual} (target_N={target_N}).")
 
-    prob_n = [prob_n0, prob_n1, prob_n2, prob_n3]
+        prob_para_target_N = [0.0] * len(possiveis_P)
+        monte_carlo_runs = 10000 # Ou configure como parâmetro da função
 
-   
-    
-
-    for idx_p, p in enumerate(possiveis_P):
-        for idx_n, N in enumerate(possiveis_N):
+        for idx_p, p_val in enumerate(possiveis_P):
+            # print(f"  Simulando N={N_actual}, p={p_val:.5f}...")
             total_bits = 0
             total_bits_errados = 0
-            all_vnodes, all_cnodes = templates[N]
 
             for _ in range(monte_carlo_runs):
-                for vnode in all_vnodes:
-                    vnode.val = 0
-                    vnode.count_odd_c_node = 0
-
-                for cnode in all_cnodes:
-                    cnode.parid_check = 0
-                BSC_bit_flip(all_vnodes, p)
-                max_iter = 50
+                # Resetar nós para cada run do Monte Carlo
+                for vnode in all_vnodes: vnode.val = 0; vnode.count_odd_c_node = 0
+                for cnode in all_cnodes: cnode.parid_check = 0
+                
+                BSC_bit_flip(all_vnodes, p_val)
+                max_iter_decoder = 50 # Ou configure
                 iteration = 0
-                while iteration < max_iter:
-                    # print([vnode.val for vnode in all_vnodes])
-                    # print([cnode.parid_check for cnode in all_cnodes])
+                while iteration < max_iter_decoder:
                     cnodes_parid_check(all_cnodes)
                     is_ok = vnodes_bit_ajust(all_vnodes)
-                    if is_ok:
-                        break
+                    if is_ok: break
                     iteration += 1
-                bits_errados = sum(vnode.val for vnode in all_vnodes)
-                total_bits_errados += bits_errados
-                total_bits += len(all_vnodes)
-                # print([vnode.val for vnode in all_vnodes])
-                # print([cnode.parid_check for cnode in all_cnodes])
-                # print(iteration)
-
                 
-            # Calcula BER para este (p, N)
-            prob_n[idx_n][idx_p] = total_bits_errados / total_bits
-
-    total_N = sum(possiveis_N)
-    prob_geral = []
-    for idx_p in range(num_P):
-        weighted_sum = (possiveis_N[0] * prob_n0[idx_p] +
-                        possiveis_N[1] * prob_n1[idx_p] +
-                        possiveis_N[2] * prob_n2[idx_p] +
-                        possiveis_N[3] * prob_n3[idx_p])
-        prob_geral.append(weighted_sum / total_N)
-   
+                bits_errados_run = sum(vnode.val for vnode in all_vnodes)
+                total_bits_errados += bits_errados_run
+                total_bits += N_actual # Usar N_actual (len(all_vnodes))
+            
+            prob_para_target_N[idx_p] = total_bits_errados / total_bits if total_bits > 0 else 0.0
+            # print(f"    BER para N={N_actual}, p={p_val:.5f}: {prob_para_target_N[idx_p]:.5e}")
+        
+        return prob_para_target_N
+    else:
     
-    return prob_n0, prob_n1, prob_n2, prob_n3, prob_geral
+        possiveis_N = Lista_N(dc)
+
+        templates = {}
+        for N in possiveis_N:
+            print(f'templare relativo a {N} criado')
+            templates[N] = LDPC(dv, dc, N)
+
+        num_N = len(possiveis_N)
+        num_P = len(possiveis_P)
+        monte_carlo_runs = 10000
+
+        # Inicializa os vetores de probabilidade para cada N
+        prob_n0 = [0.0] * num_P
+        prob_n1 = [0.0] * num_P
+        prob_n2 = [0.0] * num_P
+        prob_n3 = [0.0] * num_P
+
+        prob_n = [prob_n0, prob_n1, prob_n2, prob_n3]
+
+    
+        
+
+        for idx_p, p in enumerate(possiveis_P):
+            for idx_n, N in enumerate(possiveis_N):
+                total_bits = 0
+                total_bits_errados = 0
+                all_vnodes, all_cnodes = templates[N]
+
+                for _ in range(monte_carlo_runs):
+                    for vnode in all_vnodes:
+                        vnode.val = 0
+                        vnode.count_odd_c_node = 0
+
+                    for cnode in all_cnodes:
+                        cnode.parid_check = 0
+                    BSC_bit_flip(all_vnodes, p)
+                    max_iter = 50
+                    iteration = 0
+                    while iteration < max_iter:
+                        # print([vnode.val for vnode in all_vnodes])
+                        # print([cnode.parid_check for cnode in all_cnodes])
+                        cnodes_parid_check(all_cnodes)
+                        is_ok = vnodes_bit_ajust(all_vnodes)
+                        if is_ok:
+                            break
+                        iteration += 1
+                    bits_errados = sum(vnode.val for vnode in all_vnodes)
+                    total_bits_errados += bits_errados
+                    total_bits += len(all_vnodes)
+                    # print([vnode.val for vnode in all_vnodes])
+                    # print([cnode.parid_check for cnode in all_cnodes])
+                    # print(iteration)
+
+                    
+                # Calcula BER para este (p, N)
+                prob_n[idx_n][idx_p] = total_bits_errados / total_bits
+
+        total_N = sum(possiveis_N)
+        prob_geral = []
+        for idx_p in range(num_P):
+            weighted_sum = (possiveis_N[0] * prob_n0[idx_p] +
+                            possiveis_N[1] * prob_n1[idx_p] +
+                            possiveis_N[2] * prob_n2[idx_p] +
+                            possiveis_N[3] * prob_n3[idx_p])
+            prob_geral.append(weighted_sum / total_N)
+    
+        
+        return prob_n0, prob_n1, prob_n2, prob_n3, prob_geral
 
 def plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, possiveis_N, filename, error_hamming=None):
     vector_p = generate_vector_p()
@@ -228,7 +282,7 @@ def main():
         plot_ldpc_results(prob_n0, prob_n1, prob_n2, prob_n3, prob_geral, dc, dv, possiveis_N, filename, hamming_probs)
         print(f"Gráfico salvo como {filename}")
 
-main()
+# main()
 # LDPC(3,7,98)
 # print(Lista_N(dc=2))
 # dc = 7 e dv=3

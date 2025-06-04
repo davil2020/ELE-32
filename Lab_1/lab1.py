@@ -74,7 +74,8 @@ def report_differences(encoded_data, corrected_matrix):
     error_probability = np.float64(total_errors) / np.float64(total_bits)
     return error_probability
 
-def hamming_simulation():
+def hamming_simulation(vector_p=None):
+    print(f"DEBUG LDPC_decode Lab2: `possiveis_P` recebido: {vector_p} (Tipo: {type(vector_p)})") # D
     Ht = np.array([
         [1, 1, 1],
         [1, 0, 1],
@@ -85,7 +86,10 @@ def hamming_simulation():
         [0, 0, 1]
     ])
 
-    vector_p = generate_vector_p()
+    if vector_p is None:
+        print("Nenhum vector_p fornecido, gerando um padrão...")
+        vector_p = generate_vector_p()
+
     erro_prob = []
     
     for p in vector_p:
