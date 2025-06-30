@@ -136,7 +136,7 @@ def LDPC_decode(dc, dv, possiveis_P=None, target_N=None):
         print(f"Template criado para N_actual={N_actual} (target_N={target_N}).")
 
         prob_para_target_N = [0.0] * len(possiveis_P)
-        monte_carlo_runs = 10000 # Ou configure como parâmetro da função
+        monte_carlo_runs = 1000 # Ou configure como parâmetro da função
 
         for idx_p, p_val in enumerate(possiveis_P):
             # print(f"  Simulando N={N_actual}, p={p_val:.5f}...")

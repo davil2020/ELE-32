@@ -86,7 +86,7 @@ def main():
     # from Lab_1.lab1 import hamming_simulation 
     print('oi')
     # Parâmetros Comuns
-    EB_N0_DB_RANGE = np.arange(0.0, 5.1, 0.25).tolist() # Passo de 0.5 para testes
+    EB_N0_DB_RANGE = np.arange(0.0, 10.1, 0.5).tolist() # Passo de 0.5 para testes
     AMPLITUDE_BPSK = 1.0
 
     # --- Dicionário para armazenar todos os resultados BER ---
