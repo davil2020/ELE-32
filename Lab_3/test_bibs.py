@@ -765,7 +765,7 @@ def main():
 
     print("Todas as simulações e plotagem concluídas.")
     
-main()
+# main()
 
 # [all_vnodes, all_cnodes]= LDPC(3,7,1000)
 # for vnode in all_vnodes:
